@@ -132,6 +132,7 @@ def extract_features_from_url(url: str) -> dict:
     ip_pattern = r'^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$'
     is_ip = bool(re.match(ip_pattern, hostname))
     extracted['having_IPhaving_IP_Address'] = -1 if is_ip else 1
+    extracted['having_IP_Address'] = extracted['having_IPhaving_IP_Address']
 
     # 2. URL Length: <54 chars -> 1 (Legit), 54-75 -> 0 (Suspicious), >75 -> -1 (Phishing)
     url_len = len(url)
@@ -141,6 +142,7 @@ def extract_features_from_url(url: str) -> dict:
         extracted['URLURL_Length'] = 0
     else:
         extracted['URLURL_Length'] = -1
+    extracted['URL_Length'] = extracted['URLURL_Length']
 
     # 3. URL Shortening Service
     is_shortener = any(domain in hostname.lower() for domain in SHORTENING_DOMAINS)
@@ -326,12 +328,20 @@ with tab_url:
 
             # Display extracted heuristic features
             with st.expander("📋 View Extracted Heuristic Features", expanded=True):
+                feature_display_names = {
+                    'having_IPhaving_IP_Address': 'having_IP_Address',
+                    'URLURL_Length': 'URL_Length'
+                }
                 feat_display = []
                 for k in ['having_IPhaving_IP_Address', 'URLURL_Length', 'Shortining_Service', 
                           'having_At_Symbol', 'Prefix_Suffix', 'having_Sub_Domain', 'SSLfinal_State']:
                     val = features_dict[k]
                     status = "Phishing Indicator (-1)" if val == -1 else ("Suspicious (0)" if val == 0 else "Safe / Legitimate (+1)")
-                    feat_display.append({"Feature Name": k, "Extracted Value": val, "Assessment": status})
+                    feat_display.append({
+                        "Feature Name": feature_display_names.get(k, k),
+                        "Extracted Value": val,
+                        "Assessment": status
+                    })
                 st.table(pd.DataFrame(feat_display))
 
 # ----------------------------------------------------
@@ -350,6 +360,8 @@ with tab_manual:
         st.markdown("**🌐 URL & Domain Attributes**")
         manual_inputs['having_IPhaving_IP_Address'] = options_map[st.selectbox("IP in Address", list(options_map.keys()), index=0)]
         manual_inputs['URLURL_Length'] = options_map[st.selectbox("URL Length", list(options_map.keys()), index=0)]
+        manual_inputs['having_IP_Address'] = manual_inputs['having_IPhaving_IP_Address']
+        manual_inputs['URL_Length'] = manual_inputs['URLURL_Length']
         manual_inputs['Shortining_Service'] = options_map[st.selectbox("Shortening Service", list(options_map.keys()), index=0)]
         manual_inputs['having_At_Symbol'] = options_map[st.selectbox("Having @ Symbol", list(options_map.keys()), index=0)]
         manual_inputs['double_slash_redirecting'] = options_map[st.selectbox("Double Slash Redirection", list(options_map.keys()), index=0)]
