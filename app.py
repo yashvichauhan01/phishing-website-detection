@@ -1,23 +1,41 @@
 """
-Phishing Website Detection - Streamlit Web Application
-======================================================
-This app loads the trained Machine Learning model (`model.pkl`) and provides:
-1. URL Inspector: Automatically extracts heuristic features from a pasted URL.
-2. Full 30-Feature Inspector: Allows manual configuration of all UCI features for viva demo.
-3. Viva Prep Sidebar: Quick reference for project viva explanations.
+================================================================================
+Phishing Website Detection - Interactive Web Application (Streamlit)
+================================================================================
+File: app.py
+Features:
+1. 🔗 Real-Time URL Scanner (Phase 2):
+   Inspects live URLs purely using 26 lexical features (from url_features.py)
+   and evaluates via our Champion Model (url_model.pkl, XGBoost, 99.60% accuracy).
+2. ⚙️ Manual 30-Feature Inspector (Phase 1):
+   Allows manual configuration of all 30 UCI features to demonstrate Model A (model.pkl).
+3. 📊 Model Comparison & Architecture (Model A vs Model B):
+   Side-by-side comparative benchmarks, operational trade-offs, and limitations.
+4. 🎓 Viva Prep Guide:
+   Interactive questions and model explanations for examination defense.
+
+Author: Yashvi Chauhan
+Project: Phishing Website Detection (Phases 1 & 2)
+================================================================================
 """
 
 import os
-import re
-import urllib.parse
 import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-# ==========================================
+# Import the Phase 2 lexical feature extraction engine
+from url_features import (
+    extract_url_features,
+    FEATURE_NAMES,
+    SUSPICIOUS_KEYWORDS,
+    SHORTENING_DOMAINS
+)
+
+# =============================================================================
 # 1. PAGE CONFIGURATION & STYLING
-# ==========================================
+# =============================================================================
 st.set_page_config(
     page_title="Phishing Website Detection AI",
     page_icon="🛡️",
@@ -25,408 +43,451 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for clean aesthetics
+# Custom CSS for modern cybersecurity dashboard aesthetics
 st.markdown("""
 <style>
     .main-header {
-        font-size: 2.3rem;
+        font-size: 2.2rem;
         font-weight: 700;
-        color: #1e293b;
+        color: #0f172a;
         margin-bottom: 0.2rem;
     }
     .sub-header {
         font-size: 1.05rem;
-        color: #64748b;
+        color: #475569;
         margin-bottom: 1.5rem;
-    }
-    .metric-card {
-        background-color: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 1rem;
-        text-align: center;
     }
     .phishing-banner {
         background-color: #fef2f2;
-        border-left: 5px solid #ef4444;
-        padding: 1rem;
-        border-radius: 6px;
+        border-left: 6px solid #dc2626;
+        padding: 1.2rem;
+        border-radius: 8px;
         color: #991b1b;
         font-size: 1.25rem;
-        font-weight: 600;
+        font-weight: 700;
         margin: 1rem 0;
+        box-shadow: 0 2px 4px rgba(220, 38, 38, 0.08);
     }
     .legit-banner {
         background-color: #f0fdf4;
-        border-left: 5px solid #22c55e;
-        padding: 1rem;
-        border-radius: 6px;
+        border-left: 6px solid #16a34a;
+        padding: 1.2rem;
+        border-radius: 8px;
         color: #166534;
         font-size: 1.25rem;
-        font-weight: 600;
+        font-weight: 700;
         margin: 1rem 0;
+        box-shadow: 0 2px 4px rgba(22, 163, 74, 0.08);
+    }
+    .metric-container {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+    }
+    .badge-danger {
+        color: #b91c1c;
+        font-weight: 600;
+    }
+    .badge-safe {
+        color: #15803d;
+        font-weight: 600;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 2. MODEL LOADING
-# ==========================================
+
+# =============================================================================
+# 2. MODEL LOADING HELPERS (CACHED)
+# =============================================================================
 @st.cache_resource
-def load_trained_model():
-    """Loads model payload from model.pkl."""
+def load_phase2_url_model():
+    """
+    Loads Phase 2 Champion Model (Model B: url_model.pkl).
+    Trained on 235,370 URLs from PhiUSIIL dataset with 26 purely lexical features.
+    """
+    model_path = "url_model.pkl"
+    if not os.path.exists(model_path):
+        st.error(f"⚠️ Model file '{model_path}' not found! Please run 'python train_url_model.py' first.")
+        st.stop()
+    payload = joblib.load(model_path)
+    return payload
+
+
+@st.cache_resource
+def load_phase1_uci_model():
+    """
+    Loads Phase 1 Champion Model (Model A: model.pkl).
+    Trained on 11,055 samples from UCI Phishing dataset with 30 heuristic/DOM features.
+    """
     model_path = "model.pkl"
     if not os.path.exists(model_path):
-        st.error(f"Model file '{model_path}' not found! Please run train.py or execute notebook.ipynb first.")
-        st.stop()
-    
+        return None
     payload = joblib.load(model_path)
-    # Support both dictionary payload and direct model objects
-    if isinstance(payload, dict):
-        model = payload.get('model')
-        feature_names = payload.get('feature_names')
-        model_name = payload.get('model_name', 'Random Forest')
-        metrics = payload.get('metrics', {'accuracy': 0.9742, 'f1_score': 0.9770})
-    else:
-        model = payload
-        model_name = "Trained Classifier"
-        metrics = {'accuracy': 0.9742, 'f1_score': 0.9770}
-        # Default UCI 30 features list
-        feature_names = [
-            'having_IPhaving_IP_Address', 'URLURL_Length', 'Shortining_Service',
-            'having_At_Symbol', 'double_slash_redirecting', 'Prefix_Suffix',
-            'having_Sub_Domain', 'SSLfinal_State', 'Domain_registeration_length',
-            'Favicon', 'port', 'HTTPS_token', 'Request_URL', 'URL_of_Anchor',
-            'Links_in_tags', 'SFH', 'Submitting_to_email', 'Abnormal_URL',
-            'Redirect', 'on_mouseover', 'RightClick', 'popUpWidnow', 'Iframe',
-            'age_of_domain', 'DNSRecord', 'web_traffic', 'Page_Rank',
-            'Google_Index', 'Links_pointing_to_page', 'Statistical_report'
-        ]
-    return model, feature_names, model_name, metrics
+    return payload
 
-model, feature_names, model_name, metrics = load_trained_model()
 
-# ==========================================
-# 3. URL FEATURE EXTRACTION HELPER
-# ==========================================
-SHORTENING_DOMAINS = {
-    'bit.ly', 'tinyurl.com', 'goo.gl', 't.co', 'ow.ly', 'is.gd',
-    'buff.ly', 'adf.ly', 'bitly.com', 'tiny.cc', 'rb.gy', 'cutt.ly'
-}
+# Load both models
+phase2_payload = load_phase2_url_model()
+phase1_payload = load_phase1_uci_model()
 
-def extract_features_from_url(url: str) -> dict:
-    """
-    Extracts heuristic cybersecurity features from a raw URL string.
-    Maps heuristics into UCI encoding: 1 (Legitimate), 0 (Suspicious), -1 (Phishing).
-    """
-    if not url.startswith(('http://', 'https://')):
-        url = 'http://' + url
-        
-    parsed = urllib.parse.urlparse(url)
-    hostname = parsed.hostname or ""
-    path = parsed.path or ""
+url_model = phase2_payload["model"]
+url_model_name = phase2_payload.get("model_name", "XGBoost Classifier")
+url_metrics = phase2_payload.get("metrics", {})
 
-    extracted = {}
 
-    # 1. IP Address Presence: If IP is used instead of domain -> -1 (Phishing), else 1 (Legitimate)
-    ip_pattern = r'^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$'
-    is_ip = bool(re.match(ip_pattern, hostname))
-    extracted['having_IPhaving_IP_Address'] = -1 if is_ip else 1
-    extracted['having_IP_Address'] = extracted['having_IPhaving_IP_Address']
-
-    # 2. URL Length: <54 chars -> 1 (Legit), 54-75 -> 0 (Suspicious), >75 -> -1 (Phishing)
-    url_len = len(url)
-    if url_len < 54:
-        extracted['URLURL_Length'] = 1
-    elif 54 <= url_len <= 75:
-        extracted['URLURL_Length'] = 0
-    else:
-        extracted['URLURL_Length'] = -1
-    extracted['URL_Length'] = extracted['URLURL_Length']
-
-    # 3. URL Shortening Service
-    is_shortener = any(domain in hostname.lower() for domain in SHORTENING_DOMAINS)
-    extracted['Shortining_Service'] = -1 if is_shortener else 1
-
-    # 4. Having '@' symbol: Phishers use '@' to obscure actual destination
-    extracted['having_At_Symbol'] = -1 if '@' in url else 1
-
-    # 5. Double slash redirection: '//' in path indicates redirection
-    extracted['double_slash_redirecting'] = -1 if '//' in path else 1
-
-    # 6. Prefix/Suffix with hyphen: Legitimate sites rarely use hyphens in domain name
-    extracted['Prefix_Suffix'] = -1 if '-' in hostname else 1
-
-    # 7. Subdomains count: 1 dot -> 1 (Legit), 2 dots -> 0 (Suspicious), >=3 dots -> -1 (Phishing)
-    dots_count = hostname.count('.')
-    if dots_count <= 1:
-        extracted['having_Sub_Domain'] = 1
-    elif dots_count == 2:
-        extracted['having_Sub_Domain'] = 0
-    else:
-        extracted['having_Sub_Domain'] = -1
-
-    # 8. SSL Final State: https presence
-    if parsed.scheme == 'https':
-        extracted['SSLfinal_State'] = 1
-    else:
-        extracted['SSLfinal_State'] = -1
-
-    # 9. Non-standard port
-    if parsed.port and parsed.port not in (80, 443):
-        extracted['port'] = -1
-    else:
-        extracted['port'] = 1
-
-    # 10. HTTPS token in domain (e.g. http://https-paypal.com)
-    extracted['HTTPS_token'] = -1 if 'https' in hostname.lower() and parsed.scheme != 'https' else 1
-
-    # Realistic default assumptions for external/page-level features that cannot
-    # be extracted without live scraping or external DNS APIs
-    defaults = {
-        'Domain_registeration_length': -1 if is_ip or is_shortener else 1,
-        'Favicon': 1,
-        'Request_URL': 1,
-        'URL_of_Anchor': -1 if is_shortener or is_ip else 0,
-        'Links_in_tags': 0,
-        'SFH': -1 if is_ip else 1,
-        'Submitting_to_email': 1,
-        'Abnormal_URL': -1 if is_ip else 1,
-        'Redirect': 0,
-        'on_mouseover': 1,
-        'RightClick': 1,
-        'popUpWidnow': 1,
-        'Iframe': 1,
-        'age_of_domain': -1 if is_shortener else 1,
-        'DNSRecord': 1,
-        'web_traffic': -1 if (is_ip or is_shortener) else 0,
-        'Page_Rank': -1 if is_ip else 1,
-        'Google_Index': 1,
-        'Links_pointing_to_page': 0,
-        'Statistical_report': 1
-    }
-
-    for k, v in defaults.items():
-        if k not in extracted:
-            extracted[k] = v
-
-    return extracted
-
-# ==========================================
-# 4. SIDEBAR - VIVA CHEATSHEET & INFO
-# ==========================================
+# =============================================================================
+# 3. SIDEBAR: PERFORMANCE OVERVIEW & VIVA PREPARATION CHEATSHEET
+# =============================================================================
 with st.sidebar:
     st.image("https://img.icons8.com/fluency/96/shield.png", width=64)
     st.title("Phishing Detection AI")
-    st.markdown("Machine Learning system trained on the **UCI Phishing Websites Dataset**.")
-    
+    st.caption("Dual-Architecture Machine Learning Security Engine")
+
     st.markdown("---")
-    st.subheader("Model Performance")
-    col1, col2 = st.columns(2)
-    col1.metric("Accuracy", f"{metrics.get('accuracy', 0.9742)*100:.1f}%")
-    col2.metric("F1-Score", f"{metrics.get('f1_score', 0.9770)*100:.1f}%")
-    st.caption(f"Champion Model: **{model_name}**")
+    st.subheader("🚀 Active Scanner Engine")
+    st.markdown(f"**Architecture:** Model B (Lexical URL)")
+    st.markdown(f"**Champion:** `{url_model_name}`")
     
+    col_sb1, col_sb2 = st.columns(2)
+    acc_val = url_metrics.get("accuracy", 0.9960) * 100
+    f1_val = url_metrics.get("f1_phishing", 0.9954) * 100
+    col_sb1.metric("Accuracy", f"{acc_val:.2f}%")
+    col_sb2.metric("F1 (Phish)", f"{f1_val:.2f}%")
+    
+    st.caption(f"ROC-AUC (Phish): **{url_metrics.get('roc_auc_phishing', 0.9981)*100:.2f}%**")
+
     st.markdown("---")
     st.subheader("🎓 Viva Quick Reference")
-    with st.expander("Why Random Forest?"):
+    
+    with st.expander("❓ Why purely lexical URL features?"):
         st.write(
-            "Random Forest is an ensemble of decision trees. It captures non-linear relationships "
-            "between heuristic features, prevents overfitting via bootstrap aggregating (bagging), "
-            "and handles discrete categorical values {-1, 0, 1} robustly."
-        )
-    with st.expander("Why map -1 to 0?"):
-        st.write(
-            "The UCI dataset codes Phishing as -1 and Legitimate as +1. Binary cross-entropy loss "
-            "in modern libraries (especially XGBoost) mathematically requires labels in {0, 1}."
-        )
-    with st.expander("Top Features in Phishing"):
-        st.write(
-            "- **SSLfinal_State**: Phishing sites often lack valid certificates.\n"
-            "- **URL_of_Anchor**: Fake pages use empty/external links.\n"
-            "- **web_traffic**: Malicious domains have near-zero Alexa rank.\n"
-            "- **Prefix_Suffix**: Spoofed brand names contain hyphens."
+            "**Zero Network Dependency:** Model A required active web crawling, HTML parsing, "
+            "and live DNS/Alexa API queries. If a malicious site is already offline (most phishing "
+            "campaigns last < 24 hrs) or blocks automated scrapers, Model A fails.\n\n"
+            "**Microsecond Latency:** Lexical features compute directly from string syntax in "
+            "< 0.1 ms, enabling real-time deployment in email filters, firewalls, and browser extensions."
         )
 
-# ==========================================
-# 5. MAIN CONTENT
-# ==========================================
-st.markdown('<div class="main-header">🛡️ Phishing Website Detection</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Detect fraudulent and malicious websites using machine learning and heuristic security analysis.</div>', unsafe_allow_html=True)
+    with st.expander("❓ Why GroupShuffleSplit by Domain?"):
+        st.write(
+            "If multiple URLs share the same domain (e.g. `google.com/search` and `google.com/mail`), "
+            "standard train-test split causes **Domain Leakage**. The model memorizes domain tokens "
+            "instead of learning generalizable lexical patterns.\n\n"
+            "`GroupShuffleSplit` groups by `hostname`, guaranteeing the test set evaluates "
+            "100% unseen websites (Zero Data Leakage)."
+        )
 
-tab_url, tab_manual, tab_dataset = st.tabs([
-    "🔗 Quick URL Scanner",
-    "⚙️ Manual Feature Inspector",
-    "📊 Dataset & Architecture"
+    with st.expander("❓ What is Shannon Entropy in URLs?"):
+        st.write(
+            "Shannon entropy $H = -\\sum p_i \\log_2(p_i)$ measures character randomness. "
+            "Natural English URLs have predictable letter distributions (entropy ~3.2–3.9). "
+            "Malicious URLs generated by Domain Generation Algorithms (DGAs) or token-obfuscation "
+            "contain high randomness (entropy > 4.3)."
+        )
+
+    with st.expander("❓ Why target Phishing (label 0) metrics?"):
+        st.write(
+            "In cybersecurity, predicting legitimate sites correctly is trivial. What matters is "
+            "**Precision** (not blocking benign user traffic) and **Recall** (catching stealthy "
+            "threats). Evaluating metrics specifically on label 0 demonstrates true defensive capability."
+        )
+
+
+# =============================================================================
+# 4. MAIN USER INTERFACE
+# =============================================================================
+st.markdown('<div class="main-header">🛡️ Phishing Website Detection System</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Real-time lexical URL threat analysis & heuristic security classification powered by Machine Learning.</div>', unsafe_allow_html=True)
+
+tab_scanner, tab_manual, tab_comparison = st.tabs([
+    "🔗 Live URL Scanner (Phase 2 - Lexical Model)",
+    "⚙️ Manual 30-Feature Inspector (Phase 1 - Model A)",
+    "📊 Model Comparison & Architecture (Model A vs Model B)"
 ])
 
-# ----------------------------------------------------
-# TAB 1: QUICK URL SCANNER
-# ----------------------------------------------------
-with tab_url:
-    st.subheader("Analyze Website URL")
-    st.markdown("Enter a website address or select a test sample to extract heuristics and classify.")
 
-    # Quick test buttons
-    col_t1, col_t2, col_t3 = st.columns(3)
-    sample_url = ""
-    if col_t1.button("📌 Test Legitimate (Google)"):
-        sample_url = "https://www.google.com"
-    if col_t2.button("⚠️ Test Suspicious (IP Address)"):
-        sample_url = "http://192.168.1.105/login/verification"
-    if col_t3.button("🚨 Test Phishing (Hyphenated Brand)"):
-        sample_url = "http://paypal-verification-security-login.com/account/auth/signin?token=92837498"
+# -----------------------------------------------------------------------------
+# TAB 1: LIVE URL SCANNER (PHASE 2 - LEXICAL FEATURES + XGBOOST)
+# -----------------------------------------------------------------------------
+with tab_scanner:
+    st.subheader("Inspect Any Website URL")
+    st.markdown("Enter a website URL or test preset threat profiles. The system extracts **26 lexical features** and evaluates them via **Model B (url_model.pkl)**.")
+
+    # Quick test preset samples
+    col_demo1, col_demo2, col_demo3 = st.columns(3)
+    preset_url = ""
+    if col_demo1.button("📌 Test Legitimate Portal (Google)"):
+        preset_url = "https://www.google.com/search?q=machine+learning"
+    if col_demo2.button("⚠️ Test Suspicious IP Address"):
+        preset_url = "http://192.168.1.105:8080/login/account-verification.php"
+    if col_demo3.button("🚨 Test Phishing Brand Spoof"):
+        preset_url = "http://paypal-verification-security-login.account-update.com/signin?token=92837498"
 
     input_url = st.text_input(
-        "Website URL:",
-        value=sample_url if sample_url else "https://github.com",
-        placeholder="https://example.com"
+        "Enter Website URL to Analyze:",
+        value=preset_url if preset_url else "https://github.com",
+        placeholder="https://example.com/account/login"
     )
 
     if st.button("🔍 Scan URL Now", type="primary", use_container_width=True):
-        if not input_url.strip():
-            st.warning("Please enter a valid URL to scan.")
+        raw_url = input_url.strip()
+        if not raw_url:
+            st.warning("Please enter a valid URL to analyze.")
         else:
-            features_dict = extract_features_from_url(input_url)
+            # 1. Extract 26 purely lexical features using url_features.py
+            features_dict = extract_url_features(raw_url)
             
-            # Format feature vector matching model columns
-            input_vector = [features_dict.get(col, 0) for col in feature_names]
-            X_input = pd.DataFrame([input_vector], columns=feature_names)
+            # 2. Build feature vector aligned with model's expected column order
+            input_vector = [features_dict[col] for col in FEATURE_NAMES]
+            X_infer = pd.DataFrame([input_vector], columns=FEATURE_NAMES)
 
-            prediction = model.predict(X_input)[0]
-            probabilities = model.predict_proba(X_input)[0]
-            
-            # 0 = Phishing, 1 = Legitimate
-            phishing_prob = probabilities[0] * 100
-            legit_prob = probabilities[1] * 100
+            # 3. Model inference
+            pred = url_model.predict(X_infer)[0]
+            probs = url_model.predict_proba(X_infer)[0]
+
+            # Label 0: Phishing, Label 1: Legitimate
+            phishing_prob = probs[0] * 100
+            legit_prob = probs[1] * 100
 
             st.markdown("---")
-            if prediction == 0:
+            if pred == 0:
                 st.markdown(f"""
                 <div class="phishing-banner">
-                    🚨 WARNING: PHISHING WEBSITE DETECTED!
+                    🚨 WARNING: PHISHING THREAT DETECTED!
                     <br><span style="font-size: 0.95rem; font-weight: normal;">
-                    Risk Probability: <b>{phishing_prob:.1f}%</b>. This URL exhibits characteristics typical of credential-harvesting pages.
+                    Phishing Probability: <b>{phishing_prob:.2f}%</b>. This URL displays structural and lexical anomalies characteristic of fraudulent credentials harvesting.
                     </span>
                 </div>
                 """, unsafe_allow_html=True)
             else:
                 st.markdown(f"""
                 <div class="legit-banner">
-                    🛡️ LEGITIMATE WEBSITE
+                    🛡️ VERDICT: LEGITIMATE WEBSITE
                     <br><span style="font-size: 0.95rem; font-weight: normal;">
-                    Confidence Score: <b>{legit_prob:.1f}%</b>. The URL matches trusted security heuristics.
+                    Legitimate Confidence: <b>{legit_prob:.2f}%</b>. This URL adheres to trusted, benign lexical syntax and domain conventions.
                     </span>
                 </div>
                 """, unsafe_allow_html=True)
 
-            col_p1, col_p2 = st.columns(2)
-            col_p1.metric("Phishing Risk Score", f"{phishing_prob:.1f}%")
-            col_p2.metric("Legitimate Confidence", f"{legit_prob:.1f}%")
+            # Key metric summary cards
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            col_m1.metric("Phishing Risk Score", f"{phishing_prob:.1f}%")
+            col_m2.metric("Legitimate Confidence", f"{legit_prob:.1f}%")
+            col_m3.metric("Shannon Entropy", f"{features_dict['entropy']:.2f}")
+            col_m4.metric("URL Length", f"{features_dict['url_length']} chars")
 
-            st.progress(int(phishing_prob), text=f"Phishing Probability: {phishing_prob:.1f}%")
+            st.progress(int(phishing_prob), text=f"Calculated Threat Level: {phishing_prob:.1f}%")
 
-            # Display extracted heuristic features
-            with st.expander("📋 View Extracted Heuristic Features", expanded=True):
-                feature_display_names = {
-                    'having_IPhaving_IP_Address': 'having_IP_Address',
-                    'URLURL_Length': 'URL_Length'
-                }
-                feat_display = []
-                for k in ['having_IPhaving_IP_Address', 'URLURL_Length', 'Shortining_Service', 
-                          'having_At_Symbol', 'Prefix_Suffix', 'having_Sub_Domain', 'SSLfinal_State']:
-                    val = features_dict[k]
-                    status = "Phishing Indicator (-1)" if val == -1 else ("Suspicious (0)" if val == 0 else "Safe / Legitimate (+1)")
-                    feat_display.append({
-                        "Feature Name": feature_display_names.get(k, k),
+            # Threat Indicators Highlights
+            st.markdown("### 🔍 Risk Factor Diagnostics")
+            col_d1, col_d2, col_d3 = st.columns(3)
+
+            with col_d1:
+                is_https = features_dict["is_https"] == 1
+                proto_text = "✅ HTTPS Encrypted" if is_https else "⚠️ HTTP (Unencrypted)"
+                st.markdown(f"**Protocol:** {proto_text}")
+                
+                is_ip = features_dict["is_ip_address"] == 1
+                ip_text = "🚨 Bare IP Address Detected" if is_ip else "✅ Standard Domain Name"
+                st.markdown(f"**Host Identity:** {ip_text}")
+
+            with col_d2:
+                is_short = features_dict["is_shortener"] == 1
+                short_text = "🚨 Known URL Shortener" if is_short else "✅ Direct Domain"
+                st.markdown(f"**Redirection:** {short_text}")
+
+                hyphens = features_dict["count_hyphens"]
+                hyphen_text = f"🚨 {hyphens} Hyphens (Brand Spoofing Risk)" if hyphens >= 3 else f"✅ {hyphens} Hyphens"
+                st.markdown(f"**Hyphen Count:** {hyphen_text}")
+
+            with col_d3:
+                kw_cnt = features_dict["suspicious_keyword_count"]
+                kw_text = f"🚨 {kw_cnt} Sensitive Keywords Found" if kw_cnt > 0 else "✅ No Sensitive Keywords"
+                st.markdown(f"**Keywords:** {kw_text}")
+
+                entropy_val = features_dict["entropy"]
+                ent_text = f"🚨 High Randomness ({entropy_val:.2f})" if entropy_val > 4.2 else f"✅ Normal ({entropy_val:.2f})"
+                st.markdown(f"**Entropy:** {ent_text}")
+
+            # Expandable detailed table with all 26 extracted features
+            with st.expander("📋 Inspect All 26 Extracted Lexical Features", expanded=True):
+                feat_table = []
+                for name in FEATURE_NAMES:
+                    val = features_dict[name]
+                    # Risk assessment annotation
+                    if name == "is_https":
+                        assessment = "Safe (Encrypted)" if val == 1 else "Suspicious (Unencrypted)"
+                    elif name in ("is_ip_address", "is_shortener", "has_at_symbol") and val == 1:
+                        assessment = "High Risk Indicator"
+                    elif name.startswith("has_") and val == 1:
+                        assessment = "Suspicious Keyword Present"
+                    elif name == "entropy" and val > 4.2:
+                        assessment = "High Randomness (DGA / Hash)"
+                    elif name == "count_hyphens" and val >= 3:
+                        assessment = "Elevated Hyphen Count"
+                    elif name == "subdomain_count" and val >= 2:
+                        assessment = "Deep Subdomain Nesting"
+                    else:
+                        assessment = "Benign / Normal"
+
+                    feat_table.append({
+                        "Feature Name": name,
                         "Extracted Value": val,
-                        "Assessment": status
+                        "Cybersecurity Assessment": assessment
                     })
-                st.table(pd.DataFrame(feat_display))
 
-# ----------------------------------------------------
-# TAB 2: MANUAL FEATURE INSPECTOR (VIVA MODE)
-# ----------------------------------------------------
+                st.dataframe(pd.DataFrame(feat_table), use_container_width=True)
+
+
+# -----------------------------------------------------------------------------
+# TAB 2: MANUAL 30-FEATURE INSPECTOR (PHASE 1 - MODEL A)
+# -----------------------------------------------------------------------------
 with tab_manual:
-    st.subheader("Manual Feature Configuration")
-    st.caption("Adjust all 30 UCI features manually to demonstrate how individual inputs alter model decisions.")
+    st.subheader("Manual Feature Configuration (Phase 1 — Model A)")
+    st.caption("Adjust all 30 UCI features manually to demonstrate how individual HTML/DOM/traffic signals influence Model A.")
 
-    options_map = {"Legitimate (+1)": 1, "Suspicious (0)": 0, "Phishing (-1)": -1}
+    if phase1_payload is None:
+        st.warning("Model A (`model.pkl`) not found. Please run `python train.py` to enable Phase 1 manual inspection.")
+    else:
+        model_a = phase1_payload["model"] if isinstance(phase1_payload, dict) else phase1_payload
+        feature_names_a = phase1_payload.get("feature_names", []) if isinstance(phase1_payload, dict) else []
 
-    col_m1, col_m2, col_m3 = st.columns(3)
-    manual_inputs = {}
+        options_map = {"Legitimate (+1)": 1, "Suspicious (0)": 0, "Phishing (-1)": -1}
 
-    with col_m1:
-        st.markdown("**🌐 URL & Domain Attributes**")
-        manual_inputs['having_IPhaving_IP_Address'] = options_map[st.selectbox("IP in Address", list(options_map.keys()), index=0)]
-        manual_inputs['URLURL_Length'] = options_map[st.selectbox("URL Length", list(options_map.keys()), index=0)]
-        manual_inputs['having_IP_Address'] = manual_inputs['having_IPhaving_IP_Address']
-        manual_inputs['URL_Length'] = manual_inputs['URLURL_Length']
-        manual_inputs['Shortining_Service'] = options_map[st.selectbox("Shortening Service", list(options_map.keys()), index=0)]
-        manual_inputs['having_At_Symbol'] = options_map[st.selectbox("Having @ Symbol", list(options_map.keys()), index=0)]
-        manual_inputs['double_slash_redirecting'] = options_map[st.selectbox("Double Slash Redirection", list(options_map.keys()), index=0)]
-        manual_inputs['Prefix_Suffix'] = options_map[st.selectbox("Prefix/Suffix Hyphen", list(options_map.keys()), index=0)]
-        manual_inputs['having_Sub_Domain'] = options_map[st.selectbox("Subdomains Count", list(options_map.keys()), index=0)]
-        manual_inputs['Domain_registeration_length'] = options_map[st.selectbox("Domain Reg. Length", list(options_map.keys()), index=0)]
-        manual_inputs['age_of_domain'] = options_map[st.selectbox("Age of Domain", list(options_map.keys()), index=0)]
-        manual_inputs['DNSRecord'] = options_map[st.selectbox("DNS Record Exists", list(options_map.keys()), index=0)]
+        col_m1, col_m2, col_m3 = st.columns(3)
+        manual_inputs = {}
 
-    with col_m2:
-        st.markdown("**🔒 Security & Page Elements**")
-        manual_inputs['SSLfinal_State'] = options_map[st.selectbox("SSL Final State", list(options_map.keys()), index=0)]
-        manual_inputs['Favicon'] = options_map[st.selectbox("Favicon External", list(options_map.keys()), index=0)]
-        manual_inputs['port'] = options_map[st.selectbox("Port Standard", list(options_map.keys()), index=0)]
-        manual_inputs['HTTPS_token'] = options_map[st.selectbox("HTTPS Token in Domain", list(options_map.keys()), index=0)]
-        manual_inputs['Request_URL'] = options_map[st.selectbox("Request URL External", list(options_map.keys()), index=0)]
-        manual_inputs['URL_of_Anchor'] = options_map[st.selectbox("URL of Anchor", list(options_map.keys()), index=0)]
-        manual_inputs['Links_in_tags'] = options_map[st.selectbox("Links in Tags", list(options_map.keys()), index=0)]
-        manual_inputs['SFH'] = options_map[st.selectbox("Server Form Handler (SFH)", list(options_map.keys()), index=0)]
-        manual_inputs['Submitting_to_email'] = options_map[st.selectbox("Submit to Email", list(options_map.keys()), index=0)]
-        manual_inputs['Abnormal_URL'] = options_map[st.selectbox("Abnormal URL", list(options_map.keys()), index=0)]
+        with col_m1:
+            st.markdown("**🌐 URL & Domain Attributes**")
+            manual_inputs['having_IPhaving_IP_Address'] = options_map[st.selectbox("IP in Address", list(options_map.keys()), index=0, key="m_ip")]
+            manual_inputs['URLURL_Length'] = options_map[st.selectbox("URL Length", list(options_map.keys()), index=0, key="m_len")]
+            manual_inputs['having_IP_Address'] = manual_inputs['having_IPhaving_IP_Address']
+            manual_inputs['URL_Length'] = manual_inputs['URLURL_Length']
+            manual_inputs['Shortining_Service'] = options_map[st.selectbox("Shortening Service", list(options_map.keys()), index=0, key="m_short")]
+            manual_inputs['having_At_Symbol'] = options_map[st.selectbox("Having @ Symbol", list(options_map.keys()), index=0, key="m_at")]
+            manual_inputs['double_slash_redirecting'] = options_map[st.selectbox("Double Slash Redirection", list(options_map.keys()), index=0, key="m_slash")]
+            manual_inputs['Prefix_Suffix'] = options_map[st.selectbox("Prefix/Suffix Hyphen", list(options_map.keys()), index=0, key="m_hyphen")]
+            manual_inputs['having_Sub_Domain'] = options_map[st.selectbox("Subdomains Count", list(options_map.keys()), index=0, key="m_sub")]
+            manual_inputs['Domain_registeration_length'] = options_map[st.selectbox("Domain Reg. Length", list(options_map.keys()), index=0, key="m_reg")]
+            manual_inputs['age_of_domain'] = options_map[st.selectbox("Age of Domain", list(options_map.keys()), index=0, key="m_age")]
+            manual_inputs['DNSRecord'] = options_map[st.selectbox("DNS Record Exists", list(options_map.keys()), index=0, key="m_dns")]
 
-    with col_m3:
-        st.markdown("**⚡ Traffic & Behavior**")
-        manual_inputs['Redirect'] = options_map[st.selectbox("Redirect Count", ["Legitimate (+1)", "Suspicious (0)"], index=0)]
-        manual_inputs['on_mouseover'] = options_map[st.selectbox("Mouseover Status Bar", list(options_map.keys()), index=0)]
-        manual_inputs['RightClick'] = options_map[st.selectbox("Right Click Disabled", list(options_map.keys()), index=0)]
-        manual_inputs['popUpWidnow'] = options_map[st.selectbox("Popup Window with Input", list(options_map.keys()), index=0)]
-        manual_inputs['Iframe'] = options_map[st.selectbox("Iframe Redirection", list(options_map.keys()), index=0)]
-        manual_inputs['web_traffic'] = options_map[st.selectbox("Web Traffic Rank", list(options_map.keys()), index=0)]
-        manual_inputs['Page_Rank'] = options_map[st.selectbox("Page Rank", list(options_map.keys()), index=0)]
-        manual_inputs['Google_Index'] = options_map[st.selectbox("Indexed in Google", list(options_map.keys()), index=0)]
-        manual_inputs['Links_pointing_to_page'] = options_map[st.selectbox("Links Pointing to Page", list(options_map.keys()), index=0)]
-        manual_inputs['Statistical_report'] = options_map[st.selectbox("Statistical Report", list(options_map.keys()), index=0)]
+        with col_m2:
+            st.markdown("**🔒 Security & Page Elements**")
+            manual_inputs['SSLfinal_State'] = options_map[st.selectbox("SSL Final State", list(options_map.keys()), index=0, key="m_ssl")]
+            manual_inputs['Favicon'] = options_map[st.selectbox("Favicon External", list(options_map.keys()), index=0, key="m_fav")]
+            manual_inputs['port'] = options_map[st.selectbox("Port Standard", list(options_map.keys()), index=0, key="m_port")]
+            manual_inputs['HTTPS_token'] = options_map[st.selectbox("HTTPS Token in Domain", list(options_map.keys()), index=0, key="m_htok")]
+            manual_inputs['Request_URL'] = options_map[st.selectbox("Request URL External", list(options_map.keys()), index=0, key="m_req")]
+            manual_inputs['URL_of_Anchor'] = options_map[st.selectbox("URL of Anchor", list(options_map.keys()), index=0, key="m_anch")]
+            manual_inputs['Links_in_tags'] = options_map[st.selectbox("Links in Tags", list(options_map.keys()), index=0, key="m_tags")]
+            manual_inputs['SFH'] = options_map[st.selectbox("Server Form Handler (SFH)", list(options_map.keys()), index=0, key="m_sfh")]
+            manual_inputs['Submitting_to_email'] = options_map[st.selectbox("Submit to Email", list(options_map.keys()), index=0, key="m_mail")]
+            manual_inputs['Abnormal_URL'] = options_map[st.selectbox("Abnormal URL", list(options_map.keys()), index=0, key="m_abn")]
 
-    if st.button("⚡ Evaluate Manual Feature Vector", type="primary", use_container_width=True):
-        m_vector = [manual_inputs.get(c, 0) for c in feature_names]
-        X_manual = pd.DataFrame([m_vector], columns=feature_names)
-        
-        m_pred = model.predict(X_manual)[0]
-        m_probs = model.predict_proba(X_manual)[0]
+        with col_m3:
+            st.markdown("**⚡ Traffic & Behavior**")
+            manual_inputs['Redirect'] = options_map[st.selectbox("Redirect Count", ["Legitimate (+1)", "Suspicious (0)"], index=0, key="m_redir")]
+            manual_inputs['on_mouseover'] = options_map[st.selectbox("Mouseover Status Bar", list(options_map.keys()), index=0, key="m_mouse")]
+            manual_inputs['RightClick'] = options_map[st.selectbox("Right Click Disabled", list(options_map.keys()), index=0, key="m_rclick")]
+            manual_inputs['popUpWidnow'] = options_map[st.selectbox("Popup Window with Input", list(options_map.keys()), index=0, key="m_popup")]
+            manual_inputs['Iframe'] = options_map[st.selectbox("Iframe Redirection", list(options_map.keys()), index=0, key="m_iframe")]
+            manual_inputs['web_traffic'] = options_map[st.selectbox("Web Traffic Rank", list(options_map.keys()), index=0, key="m_traf")]
+            manual_inputs['Page_Rank'] = options_map[st.selectbox("Page Rank", list(options_map.keys()), index=0, key="m_prank")]
+            manual_inputs['Google_Index'] = options_map[st.selectbox("Indexed in Google", list(options_map.keys()), index=0, key="m_gindex")]
+            manual_inputs['Links_pointing_to_page'] = options_map[st.selectbox("Links Pointing to Page", list(options_map.keys()), index=0, key="m_links")]
+            manual_inputs['Statistical_report'] = options_map[st.selectbox("Statistical Report", list(options_map.keys()), index=0, key="m_stat")]
 
-        if m_pred == 0:
-            st.error(f"🚨 Prediction: **Phishing Website** (Confidence: {m_probs[0]*100:.2f}%)")
-        else:
-            st.success(f"🛡️ Prediction: **Legitimate Website** (Confidence: {m_probs[1]*100:.2f}%)")
+        if st.button("⚡ Evaluate Manual Feature Vector with Model A", type="primary", use_container_width=True):
+            m_vector = [manual_inputs.get(c, 0) for c in feature_names_a]
+            X_manual = pd.DataFrame([m_vector], columns=feature_names_a)
 
-# ----------------------------------------------------
-# TAB 3: DATASET & ARCHITECTURE
-# ----------------------------------------------------
-with tab_dataset:
-    st.subheader("Model Architecture & Benchmark Comparison")
-    
-    comp_data = {
-        "Model": ["Logistic Regression", "Random Forest", "XGBoost"],
-        "Accuracy": ["92.90%", "97.42%", "97.38%"],
-        "Precision": ["92.42%", "96.96%", "96.88%"],
-        "Recall": ["95.04%", "98.46%", "98.46%"],
-        "F1-Score": ["93.71%", "97.70%", "97.66%"]
+            m_pred = model_a.predict(X_manual)[0]
+            m_probs = model_a.predict_proba(X_manual)[0]
+
+            if m_pred == 0:
+                st.error(f"🚨 Model A Prediction: **Phishing Website** (Phishing Confidence: {m_probs[0]*100:.2f}%)")
+            else:
+                st.success(f"🛡️ Model A Prediction: **Legitimate Website** (Legitimate Confidence: {m_probs[1]*100:.2f}%)")
+
+
+# -----------------------------------------------------------------------------
+# TAB 3: MODEL COMPARISON & ARCHITECTURE (MODEL A vs MODEL B)
+# -----------------------------------------------------------------------------
+with tab_comparison:
+    st.subheader("Architectural Comparison: Model A vs Model B")
+    st.markdown("A head-to-head comparison between **Phase 1 (UCI Heuristic Model)** and **Phase 2 (URL-Only Lexical Model)**.")
+
+    comparison_data = {
+        "Metric / Property": [
+            "Dataset Source",
+            "Sample Count",
+            "Features Count",
+            "Feature Nature",
+            "Data Split Strategy",
+            "Champion Algorithm",
+            "Overall Accuracy",
+            "Phishing Precision",
+            "Phishing Recall",
+            "Phishing F1-Score",
+            "Phishing ROC-AUC",
+            "Execution Latency",
+            "Network / Internet Dependency"
+        ],
+        "Model A (Phase 1 — UCI Features)": [
+            "UCI Phishing Websites Dataset",
+            "11,055 instances",
+            "30 features",
+            "HTML DOM, Alexa Rank, DNS, SSL",
+            "Stratified Random 80/20",
+            "Random Forest Classifier",
+            "97.42%",
+            "96.96%",
+            "98.46%",
+            "97.70%",
+            "~98.50%",
+            "2.0 – 5.0 seconds (Scraping + DNS)",
+            "Required (Crawls live webpage & APIs)"
+        ],
+        "Model B (Phase 2 — Lexical URL)": [
+            "PhiUSIIL Phishing URL Dataset",
+            "235,370 instances (deduplicated)",
+            "26 lexical features",
+            "String syntax, entropy, delimiters",
+            "GroupShuffleSplit (by Domain)",
+            "XGBoost Classifier",
+            "99.60%",
+            "99.90%",
+            "99.18%",
+            "99.54%",
+            "99.81%",
+            "< 0.1 milliseconds (Pure string math)",
+            "None (100% offline & client-safe)"
+        ]
     }
-    st.table(pd.DataFrame(comp_data))
+    st.table(pd.DataFrame(comparison_data))
 
-    st.markdown("""
-    ### Why Random Forest is the Champion Model:
-    1. **Highest F1-Score (97.70%) & Accuracy (97.42%):** Balances false alarms and missed threats best.
-    2. **Handles Discrete Categorical Data:** UCI features take discrete ternary values `{-1, 0, 1}`, which decision tree splits partition cleanly without requiring normalization or scaling.
-    3. **Ensemble Generalization:** Bagging 100 decorrelated trees reduces model variance and eliminates single-tree overfitting.
-    """)
+    st.markdown("---")
+    st.markdown("### ⚖️ Architectural Trade-Offs & Limitations")
+
+    col_lim1, col_lim2 = st.columns(2)
+
+    with col_lim1:
+        st.markdown("""
+        #### 📌 Limitations of Model A (UCI Features)
+        1. **High Latency & Resource Overhead:** Extracting DOM tags (`<a>`, `<iframe>`, `<form>`), measuring Alexa web traffic, and performing WHOIS DNS lookups takes **2 to 5 seconds** per URL.
+        2. **Dead Website Failure:** Over 80% of phishing domains are taken down within 24–48 hours. When a site is offline or suspended, Model A cannot retrieve any page content, resulting in complete failure.
+        3. **Vulnerable to Cloaking & Bot Detection:** Attackers employ server-side bot blockers or CAPTCHAs that return benign HTML to security scanners while serving phishing payloads to real human mobile users.
+        4. **Data Leakage Risk:** Standard row-level splitting on small datasets can cause domain memorization if multiple URLs share the same website.
+        """)
+
+    with col_lim2:
+        st.markdown("""
+        #### 📌 Limitations of Model B (Lexical-Only)
+        1. **Blind to Page Content & Form Handlers:** Model B evaluates solely the characters of the URL string. It cannot inspect what forms, scripts, or credential-harvesting inputs actually render on the page.
+        2. **Compromised Legitimate Sites:** If an attacker compromises a high-reputation domain (e.g. `university.edu/student/survey`), the clean domain syntax may evade lexical triggers despite hosting malware.
+        3. **Homoglyph & Benign-Looking URLs:** Attackers utilizing clean, newly registered domains without obvious hyphens or keywords (e.g., `portal-secure7.com`) can produce low lexical suspicion.
+        4. **Production Recommendation:** Deploy **Model B as a microsecond edge filter** (in firewalls/browser extensions), and trigger deep DOM inspection (Model A) only on ambiguous cases.
+        """)
