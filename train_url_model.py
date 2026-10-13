@@ -27,7 +27,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from sklearn.model_selection import GroupShuffleSplit, GridSearchCV
+from sklearn.model_selection import GroupShuffleSplit, GroupKFold, GridSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
@@ -111,12 +111,14 @@ def run_phase2_training():
     print(f"      Features shape -> Train: {X_train.shape}, Test: {X_test.shape}")
 
     # -------------------------------------------------------------------------
-    # 4. 5-Fold Cross-Validation and GridSearchCV Tuning
+    # 4. 5-Fold Domain-Aware Cross-Validation and GridSearchCV Tuning
     # -------------------------------------------------------------------------
-    print("\n[4/7] Hyperparameter tuning via 5-Fold Cross-Validation & GridSearchCV...")
+    print("\n[4/7] Hyperparameter tuning via 5-Fold GroupKFold (Domain-Aware) & GridSearchCV...")
+    groups_train = train_df["hostname"].values
+    gkf = GroupKFold(n_splits=5)
 
     # A. Logistic Regression (Linear Baseline with standard scaling)
-    print("      [A/C] Tuning Logistic Regression...")
+    print("      [A/C] Tuning Logistic Regression with GroupKFold...")
     pipe_lr = Pipeline([
         ("scaler", StandardScaler()),
         ("lr", LogisticRegression(max_iter=500, random_state=42))
@@ -124,30 +126,30 @@ def run_phase2_training():
     grid_lr = GridSearchCV(
         pipe_lr,
         param_grid={"lr__C": [0.1, 1.0]},
-        cv=5,
+        cv=gkf,
         scoring="f1",
         n_jobs=-1
     )
     t0 = time.time()
-    grid_lr.fit(X_train, y_train)
+    grid_lr.fit(X_train, y_train, groups=groups_train)
     print(f"            Tuned in {time.time() - t0:.2f}s | Best Params: {grid_lr.best_params_} | CV F1: {grid_lr.best_score_:.4f}")
 
     # B. Random Forest (Bagging Ensemble)
-    print("      [B/C] Tuning Random Forest...")
+    print("      [B/C] Tuning Random Forest with GroupKFold...")
     rf_base = RandomForestClassifier(random_state=42, n_jobs=-1)
     grid_rf = GridSearchCV(
         rf_base,
         param_grid={"n_estimators": [50, 100], "max_depth": [10, 14]},
-        cv=5,
+        cv=gkf,
         scoring="f1",
         n_jobs=-1
     )
     t0 = time.time()
-    grid_rf.fit(X_train, y_train)
+    grid_rf.fit(X_train, y_train, groups=groups_train)
     print(f"            Tuned in {time.time() - t0:.2f}s | Best Params: {grid_rf.best_params_} | CV F1: {grid_rf.best_score_:.4f}")
 
     # C. XGBoost (Gradient Boosting)
-    print("      [C/C] Tuning XGBoost...")
+    print("      [C/C] Tuning XGBoost with GroupKFold...")
     xgb_base = XGBClassifier(
         eval_metric="logloss",
         random_state=42,
@@ -157,18 +159,34 @@ def run_phase2_training():
     grid_xgb = GridSearchCV(
         xgb_base,
         param_grid={"n_estimators": [50, 100], "max_depth": [4, 6]},
-        cv=5,
+        cv=gkf,
         scoring="f1",
         n_jobs=-1
     )
     t0 = time.time()
-    grid_xgb.fit(X_train, y_train)
+    grid_xgb.fit(X_train, y_train, groups=groups_train)
     print(f"            Tuned in {time.time() - t0:.2f}s | Best Params: {grid_xgb.best_params_} | CV F1: {grid_xgb.best_score_:.4f}")
 
     # -------------------------------------------------------------------------
-    # 5. Comprehensive Test Set Evaluation (Focus: Phishing Class = 0)
+    # 5. Champion Model Selection via 5-Fold GroupKFold CV (Fixes Model Selection Leakage)
     # -------------------------------------------------------------------------
-    print("\n[5/7] Evaluating tuned models on unseen test split (Target: Phishing Class = 0)...")
+    cv_models = {
+        "Logistic Regression": (grid_lr.best_estimator_, grid_lr.best_score_, grid_lr.best_params_),
+        "Random Forest": (grid_rf.best_estimator_, grid_rf.best_score_, grid_rf.best_params_),
+        "XGBoost": (grid_xgb.best_estimator_, grid_xgb.best_score_, grid_xgb.best_params_)
+    }
+
+    # Select champion strictly based on cross-validation performance on training folds
+    champion_name = max(cv_models, key=lambda k: cv_models[k][1])
+    champion_model, champion_cv_score, champion_params = cv_models[champion_name]
+
+    print(f"\n      >>> Champion Selected via 5-Fold GroupKFold CV: {champion_name} "
+          f"(CV F1: {champion_cv_score*100:.2f}% | Best Params: {champion_params})")
+
+    # -------------------------------------------------------------------------
+    # 6. Comprehensive Test Set Evaluation (Unseen test split; reported once)
+    # -------------------------------------------------------------------------
+    print("\n[5/7] Evaluating models on unseen test split (Target: Phishing Class = 0)...")
     models = {
         "Logistic Regression": grid_lr.best_estimator_,
         "Random Forest": grid_rf.best_estimator_,
@@ -201,16 +219,15 @@ def run_phase2_training():
             "recall_phishing": rec_phish,
             "f1_phishing": f1_phish,
             "roc_auc_phishing": auc_phish,
-            "confusion_matrix": cm
+            "confusion_matrix": cm,
+            "cv_f1": cv_models[name][1]
         })
 
-        print(f"{name:<22} | {acc*100:6.2f}%   | {prec_phish*100:6.2f}%      | {rec_phish*100:6.2f}%      | {f1_phish*100:6.2f}%   | {auc_phish*100:6.2f}%")
+        tag = " (Champion)" if name == champion_name else ""
+        print(f"{name + tag:<22} | {acc*100:6.2f}%   | {prec_phish*100:6.2f}%      | {rec_phish*100:6.2f}%      | {f1_phish*100:6.2f}%   | {auc_phish*100:6.2f}%")
     print("-" * 92)
 
-    # Identify Champion Model based on F1-Score for Phishing & ROC-AUC
-    champion_info = max(eval_results, key=lambda x: (x["f1_phishing"], x["roc_auc_phishing"]))
-    print(f"\n      >>> Champion Selected: {champion_info['model_name']} "
-          f"(F1 Phishing: {champion_info['f1_phishing']*100:.2f}%, Accuracy: {champion_info['accuracy']*100:.2f}%)")
+    champion_info = next(r for r in eval_results if r["model_name"] == champion_name)
 
     # Display Confusion Matrices
     print("\n      Confusion Matrices ([Row: Actual 0/1, Col: Predicted 0/1]):")

@@ -10,3 +10,4 @@ nbformat>=5.10.0
 nbclient>=0.10.0
 ipykernel>=6.29.0
 shap>=0.45.0
+pytest>=8.0.0

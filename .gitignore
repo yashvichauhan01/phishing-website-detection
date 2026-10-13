@@ -22,6 +22,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.pytest_cache/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -36,3 +37,9 @@ wheels/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Backups
+backups/
+
+# Large Datasets
+data/phiusiil.csv

@@ -219,7 +219,7 @@ with tab_scanner:
     col_demo1, col_demo2, col_demo3 = st.columns(3)
     preset_url = ""
     if col_demo1.button("📌 Test Legitimate Portal (Google)"):
-        preset_url = "https://www.google.com/search?q=machine+learning"
+        preset_url = "https://www.google.com"
     if col_demo2.button("⚠️ Test Suspicious IP Address"):
         preset_url = "http://192.168.1.105:8080/login/account-verification.php"
     if col_demo3.button("🚨 Test Phishing Brand Spoof"):
