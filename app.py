@@ -49,12 +49,12 @@ st.markdown("""
     .main-header {
         font-size: 2.2rem;
         font-weight: 700;
-        color: #0f172a;
+        color: #FFFFFF;
         margin-bottom: 0.2rem;
     }
     .sub-header {
         font-size: 1.05rem;
-        color: #475569;
+        color: #CBD5E1;
         margin-bottom: 1.5rem;
     }
     .phishing-banner {
