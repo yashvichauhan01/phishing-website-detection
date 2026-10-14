@@ -22,8 +22,8 @@ phishing-website-detection/
     ├── Features: 26 lexical features (String syntax, character entropy, delimiter counts, keywords)
     ├── Splitting: GroupShuffleSplit by Domain (Zero Domain Leakage)
     ├── Model Selection: 5-Fold GroupKFold Cross-Validation on Training Folds
-    └── Champion: Random Forest Classifier (Accuracy: 99.60% | Phishing F1: 99.53% | ROC-AUC: 99.78%)
-        (Reference XGBoost: Accuracy: 99.60% | Phishing F1: 99.54% | ROC-AUC: 99.81%)
+    └── Champion: XGBoost Classifier (Accuracy: 99.48% | Phishing F1: 99.40% | ROC-AUC: 99.70%)
+        (Reference Random Forest: Accuracy: 99.48% | Phishing F1: 99.40% | ROC-AUC: 99.65%)
 ```
 
 ---
@@ -39,12 +39,12 @@ phishing-website-detection/
 | **Data Splitting Strategy** | Stratified Random 80/20 | **`GroupShuffleSplit` (by Hostname/Domain)** |
 | **Domain Leakage Prevention**| Deduplication prior to split | **Guaranteed Zero Domain Overlap** |
 | **Model Selection Criterion**| **5-Fold Stratified CV on Training Data** | **5-Fold `GroupKFold` CV on Training Groups** |
-| **Champion Algorithm** | **XGBoost Classifier** | **Random Forest Classifier** |
-| **Overall Accuracy** | **95.21%** (Pre-dedup: 96.92%) | **99.60%** |
-| **Precision (Phishing = 0)**| 95.07% | **99.90%** |
-| **Recall (Phishing = 0)** | 95.70% | **99.17%** |
-| **F1-Score (Phishing = 0)** | 95.38% (Legitimate F1: 95.04%) | **99.53%** |
-| **ROC-AUC (Phishing = 0)** | **99.33%** | **99.78%** |
+| **Champion Algorithm** | **XGBoost Classifier** | **XGBoost Classifier** |
+| **Overall Accuracy** | **95.21%** (Pre-dedup: 96.92%) | **99.48%** |
+| **Precision (Phishing = 0)**| 95.37% | **99.89%** |
+| **Recall (Phishing = 0)** | 94.70% | **98.91%** |
+| **F1-Score (Phishing = 0)** | 95.04% | **99.40%** |
+| **ROC-AUC (Phishing = 0)** | **99.33%** | **99.70%** |
 | **Execution Latency** | **2.0 – 5.0 seconds** (Network scraping) | **< 0.1 milliseconds** (Microsecond string parse) |
 | **Network / API Dependency**| **Required** (Crawls live HTML, WHOIS, DNS) | **None** (100% offline & client-side safe) |
 | **Model Artifact** | `model.pkl` | `url_model.pkl` |
@@ -102,23 +102,23 @@ Extracts 26 lightweight lexical features directly from URL strings:
 
 ### Step 4: 5-Fold Domain-Aware CV (`GroupKFold`) Tuning & Model Selection
 Champion chosen strictly via `best_score_` across 5-fold domain-grouped CV on training folds:
-- **Logistic Regression:** Scaled via `StandardScaler`, tuned over $C \in \{0.1, 1.0\}$. Best: $C=1.0$ (CV F1: 99.40%).
-- **Random Forest (Champion):** Tuned over `n_estimators` $\in \{50, 100\}$, `max_depth` $\in \{10, 14\}$. Best: `max_depth=14, n_estimators=100` (**CV F1: 99.61%**).
-- **XGBoost:** Tuned over `n_estimators` $\in \{50, 100\}$, `max_depth` $\in \{4, 6\}$. Best: `max_depth=4, n_estimators=100` (**CV F1: 99.61%**).
+- **Logistic Regression:** Scaled via `StandardScaler`, tuned over $C \in \{0.1, 1.0\}$. Best: $C=1.0$ (CV F1: 99.49%).
+- **Random Forest:** Tuned over `n_estimators` $\in \{50, 100\}$, `max_depth` $\in \{10, 14\}$. Best: `max_depth=10, n_estimators=100` (CV F1: 99.56%).
+- **XGBoost (Champion):** Tuned over `n_estimators` $\in \{50, 100\}$, `max_depth` $\in \{4, 6\}$. Best: `max_depth=4, n_estimators=100` (**CV F1: 99.56%**).
 
 ### Step 5: Test Set Results (Phishing Class = 0)
-Evaluated on **47,514 unseen test URLs** with zero domain overlap:
+Evaluated on **48,100 unseen test URLs** with zero domain overlap:
 
 | Model | Accuracy | Precision (Phish) | Recall (Phish) | F1-Score (Phish) | ROC-AUC (Phish) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Logistic Regression** | 99.38% | 99.96% | 98.60% | 99.28% | 99.61% |
-| **Random Forest (Champion)**| **99.60%** | **99.90%** | **99.17%** | **99.53%** | **99.78%** |
-| **XGBoost (Reference)** | **99.60%** | **99.91%** | **99.17%** | **99.54%** | **99.81%** |
+| **Logistic Regression** | 99.39% | 99.94% | 98.67% | 99.30% | 99.70% |
+| **Random Forest** | 99.48% | 99.93% | 98.87% | 99.40% | 99.65% |
+| **XGBoost (Champion)** | **99.48%** | **99.89%** | **98.91%** | **99.40%** | **99.70%** |
 
-#### Confusion Matrix (Champion Random Forest):
+#### Confusion Matrix (Champion XGBoost):
 ```
-Actual Phish [0]:  [[20,321  (TP),     171 (FN - Missed Phish)],
-Actual Legit [1]:   [    20  (FP),  27,002 (TN - Caught Legit)]]
+Actual Phish [0]:  [[20,822  (TP),     230 (FN - Missed Phish)],
+Actual Legit [1]:   [    22  (FP),  27,026 (TN - Caught Legit)]]
 ```
 
 ---
@@ -128,11 +128,15 @@ Actual Legit [1]:   [    20  (FP),  27,002 (TN - Caught Legit)]]
 1. **Dataset Shortcut Artifacts (`is_https` & `path_length`):**
    - In the PhiUSIIL dataset, legitimate URLs were collected as top-level domain landing pages (all have `path_length = 0`), whereas phishing URLs frequently contain subpaths.
    - Consequently, the model relies heavily on `path_length` and `is_https`. An ablation study retraining the model without `is_https` and `path_length` saw F1-Score drop from **99.53% to 82.88%**, demonstrating significant shortcut reliance.
-2. **Real-World / Out-of-Distribution Generalization Drop:**
+2. **Known Dataset Bias (`www.` Hostname Prefix & Mitigation):**
+   - In the raw PhiUSIIL dataset, **100% of legitimate URLs** start with `http://www.` or `https://www.` (0 legitimate URLs omit `www`), whereas only ~41% of phishing URLs begin with `www.`.
+   - Without normalization, machine learning models immediately exploit this dataset artifact as an artificial shortcut rule (`count_dots <= 1` or `subdomain_count == 0` -> Phishing), resulting in false positives where major benign websites (such as `https://github.com` and `https://google.com`) were falsely flagged as 100% phishing while their `www.` counterparts were classified as legitimate.
+   - **Mitigation Implemented:** All URLs are now canonically pre-processed via `normalize_url()` in [`url_features.py`](file:///c:/Users/YASHVI%20CHAUHAN/OneDrive/ドキュメント/phishing-website-detection/url_features.py), which strips any leading `www.` hostname prefix before feature extraction and inference. As a result, `https://github.com` and `https://www.github.com` produce identical feature representations and consistent legitimate predictions.
+3. **Real-World / Out-of-Distribution Generalization Drop:**
    - When evaluating `url_model.pkl` on a live feed of **300 active zero-day phishing URLs from OpenPhish** alongside 300 top-site pages with full path endpoints, the model flagged all URLs with paths as phishing. Real-world URL filters require threshold calibration and continuous domain whitelisting.
-3. **Phase 1 Application Dependency:**
+4. **Phase 1 Application Dependency:**
    - Model A requires live web crawling (HTML DOM parsing, JS event listeners, WHOIS records, and Alexa traffic APIs), taking 2–5 seconds per URL and completely failing on suspended or offline phishing sites (80% of phishing kits go dark in under 48 hours). For safety and determinism, the Streamlit app offers manual feature slider inspection for Model A rather than executing live uncontrolled web scraping.
-4. **Blindness of Purely Lexical Analysis:**
+5. **Blindness of Purely Lexical Analysis:**
    - Model B cannot inspect rendered page forms, credential POST destinations, or hidden iframes. If an attacker compromises a high-reputation domain (e.g. `university.edu/~student/survey`), the clean lexical syntax evades detection.
 
 ---
@@ -171,7 +175,7 @@ phishing-website-detection/
 ├── url_features.py              # Phase 2: 26 lexical feature extraction engine
 ├── train_url_model.py           # Phase 2: CLI training & GroupKFold CV pipeline
 ├── url_model.ipynb              # Phase 2: Fully executed Jupyter Notebook with SHAP plots
-├── url_model.pkl                # Phase 2: Champion Random Forest model artifact
+├── url_model.pkl                # Phase 2: Champion XGBoost model artifact
 ├── train.py                     # Phase 1: UCI model training & Stratified CV script
 ├── notebook.ipynb               # Phase 1: UCI exploration & training notebook
 ├── model.pkl                    # Phase 1: Champion XGBoost model artifact
@@ -197,12 +201,7 @@ phishing-website-detection/
 Follow these commands to set up the environment, train the models, run tests, and start the application:
 
 ```bash
-python -m venv venv ; venv\Scripts\activate
-pip install -r requirements.txt
-python train.py
-python train_url_model.py
-python -m pytest tests/
-streamlit run app.py
+python -m venv venv ; venv\Scripts\activate ; pip install -r requirements.txt ; streamlit run app.py ; python -m pytest tests/ ; python train.py ; python train_url_model.py
 ```
 
 ---

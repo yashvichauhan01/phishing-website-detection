@@ -6,7 +6,7 @@ File: app.py
 Features:
 1. 🔗 Real-Time URL Scanner (Phase 2):
    Inspects live URLs purely using 26 lexical features (from url_features.py)
-   and evaluates via our Champion Model (url_model.pkl, XGBoost, 99.60% accuracy).
+   and evaluates via our Champion Model (url_model.pkl, XGBoost, 99.48% accuracy).
 2. ⚙️ Manual 30-Feature Inspector (Phase 1):
    Allows manual configuration of all 30 UCI features to demonstrate Model A (model.pkl).
 3. 📊 Model Comparison & Architecture (Model A vs Model B):
@@ -151,12 +151,12 @@ with st.sidebar:
     st.markdown(f"**Champion:** `{url_model_name}`")
     
     col_sb1, col_sb2 = st.columns(2)
-    acc_val = url_metrics.get("accuracy", 0.9960) * 100
-    f1_val = url_metrics.get("f1_phishing", 0.9954) * 100
+    acc_val = url_metrics.get("accuracy", 0.9948) * 100
+    f1_val = url_metrics.get("f1_phishing", 0.9940) * 100
     col_sb1.metric("Accuracy", f"{acc_val:.2f}%")
     col_sb2.metric("F1 (Phish)", f"{f1_val:.2f}%")
     
-    st.caption(f"ROC-AUC (Phish): **{url_metrics.get('roc_auc_phishing', 0.9981)*100:.2f}%**")
+    st.caption(f"ROC-AUC (Phish): **{url_metrics.get('roc_auc_phishing', 0.9970)*100:.2f}%**")
 
     st.markdown("---")
     st.subheader("🎓 Viva Quick Reference")
@@ -438,16 +438,16 @@ with tab_comparison:
         ],
         "Model A (Phase 1 — UCI Features)": [
             "UCI Phishing Websites Dataset",
-            "11,055 instances",
+            "5,849 instances (deduplicated)",
             "30 features",
             "HTML DOM, Alexa Rank, DNS, SSL",
             "Stratified Random 80/20",
-            "Random Forest Classifier",
-            "97.42%",
-            "96.96%",
-            "98.46%",
-            "97.70%",
-            "~98.50%",
+            "XGBoost Classifier",
+            "95.21%",
+            "95.37%",
+            "94.70%",
+            "95.04%",
+            "99.33%",
             "2.0 – 5.0 seconds (Scraping + DNS)",
             "Required (Crawls live webpage & APIs)"
         ],
@@ -458,11 +458,11 @@ with tab_comparison:
             "String syntax, entropy, delimiters",
             "GroupShuffleSplit (by Domain)",
             "XGBoost Classifier",
-            "99.60%",
-            "99.90%",
-            "99.18%",
-            "99.54%",
-            "99.81%",
+            "99.48%",
+            "99.89%",
+            "98.91%",
+            "99.40%",
+            "99.70%",
             "< 0.1 milliseconds (Pure string math)",
             "None (100% offline & client-safe)"
         ]

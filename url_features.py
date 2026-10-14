@@ -113,23 +113,70 @@ def calculate_shannon_entropy(text: str) -> float:
     return float(entropy)
 
 
+def normalize_url(url: str) -> str:
+    """
+    Normalizes a URL by stripping any 'www.' prefix from its hostname.
+    Ensures that 'https://www.google.com/x' and 'https://google.com/x' yield
+    identical representations and lexical features, eliminating dataset 'www.' bias.
+    """
+    u = str(url).strip()
+    if not u:
+        return u
+    has_scheme = "://" in u
+    temp_url = u if has_scheme else "http://" + u
+    try:
+        parsed = urllib.parse.urlsplit(temp_url)
+        netloc = parsed.netloc
+        userinfo = ""
+        host_port = netloc
+        if "@" in netloc:
+            userinfo, host_port = netloc.split("@", 1)
+            userinfo += "@"
+
+        host = host_port
+        port = ""
+        if ":" in host_port and not host_port.endswith("]"):
+            h, p = host_port.rsplit(":", 1)
+            if p.isdigit():
+                host = h
+                port = ":" + p
+
+        if host.lower().startswith("www."):
+            norm_host = host[4:]
+            norm_netloc = userinfo + norm_host + port
+            norm_parsed = parsed._replace(netloc=norm_netloc)
+            res = urllib.parse.urlunsplit(norm_parsed)
+            if not has_scheme:
+                res = res[len("http://"):]
+            return res
+        return u
+    except Exception:
+        return re.sub(r"^(https?://)?www\.", r"\1", u, flags=re.IGNORECASE)
+
+
 def extract_hostname(url: str) -> str:
     """
-    Safely extracts the lowercase hostname from a raw URL string.
-    Ensures an HTTP scheme prefix is present so urllib.parse works reliably.
+    Safely extracts the lowercase hostname from a raw URL string,
+    normalizing by stripping leading 'www.' if present.
     """
-    url_str = str(url).strip()
+    url_str = normalize_url(url)
     if not url_str:
         return ""
     if "://" not in url_str:
         url_str = "http://" + url_str
     try:
         parsed = urllib.parse.urlparse(url_str)
-        return (parsed.hostname or "").lower()
+        host = (parsed.hostname or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        return host
     except Exception:
         # Fallback regex extraction if urllib fails on malformed inputs
         match = re.search(r"https?://([^/:\?#]+)", url_str)
-        return match.group(1).lower() if match else ""
+        host = match.group(1).lower() if match else ""
+        if host.startswith("www."):
+            host = host[4:]
+        return host
 
 
 # -----------------------------------------------------------------------------
@@ -178,7 +225,8 @@ def extract_url_features(url: str) -> Dict[str, Union[int, float]]:
     25. digit_to_letter_ratio: Ratio of digits to letters. High in generated attacks.
     26. entropy: Shannon entropy measuring character distribution unpredictability.
     """
-    u = str(url).strip()
+    # Step 1: Normalize URL (strip 'www.' prefix from hostname) to remove dataset artifact bias
+    u = normalize_url(str(url).strip())
     u_lower = u.lower()
     
     # Ensure scheme for standard parsing
@@ -186,6 +234,8 @@ def extract_url_features(url: str) -> Dict[str, Union[int, float]]:
     try:
         parsed = urllib.parse.urlparse(url_with_scheme)
         hostname = (parsed.hostname or "").lower()
+        if hostname.startswith("www."):
+            hostname = hostname[4:]
         path = parsed.path or ""
     except Exception:
         hostname = extract_hostname(u)

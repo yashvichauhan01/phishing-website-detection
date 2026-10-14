@@ -143,3 +143,10 @@ def test_model_predict_proba_inference():
         assert 0.0 <= p[0] <= 1.0
         assert 0.0 <= p[1] <= 1.0
         assert pytest.approx(sum(p), 0.001) == 1.0
+
+
+def test_www_normalization_equivalence():
+    """Confirms www and non-www URLs of the same domain yield identical extracted features."""
+    feat_www = extract_url_features("https://www.github.com")
+    feat_apex = extract_url_features("https://github.com")
+    assert feat_www == feat_apex, f"Features differ between www and non-www versions: {feat_www} != {feat_apex}"
